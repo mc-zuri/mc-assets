@@ -266,6 +266,26 @@ const resolvedModel = getItemDefinitionModelResolved(store, {
 // Returns texture info ready to render
 ```
 
+### Entity Models
+
+`dist/entityModels.json` has the entity models exported from the game by
+minecraft-model-generator, a Fabric client mod (`custom/entities/<version>/`): the
+model layers as part trees (model space: pixels, y down, radians; cubes as the arguments of the game's cube
+constructor), and for every entity what its renderer draws (layers with their transform, texture, render type, tint and
+pose), per look: a default look and patches with conditions on the entity's synched data (metadata) and equipment.
+
+```ts
+import { EntityModelsStore, composeEntityLook } from 'mc-assets/dist/entityModels'
+import entityModels from 'mc-assets/dist/entityModels.json'
+
+const store = new EntityModelsStore(entityModels)
+const wolf = store.getEntity('26.3', 'wolf')
+// metadata by index, as the client gets it; equipment by slot
+const look = composeEntityLook(wolf, { metadata: { 18: 4, 23: 0 }, equipment: { body: 'wolf_armor' } })
+// [{ key: 'minecraft:wolf#main#1', entry: { type: 'model', model: 'minecraft:wolf#main', texture: 'minecraft:entity/wolf/wolf_ashen_tame', ... } }, ...]
+const model = store.getModel('26.3', look[0].entry.model)
+```
+
 ## Building
 
 ```bash
@@ -276,6 +296,7 @@ pnpm build
 ```
 
 Then if you only changing block entities, you can run `pnpm regen-blockentities` to regenerate block entities.
+After adding or updating an entity models export in `custom/entities/<version>/`, run `pnpm regen-entities`.
 If you only change consumer code you can run `pnpm watch-dist` to watch for changes and rebuild.
 
 To use in `minecraft-web-client` or your own project just run `pnpm link mc-assets` once or use `file:../mc-assets` in your `package.json` file if you are using other package manager.

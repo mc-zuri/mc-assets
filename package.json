@@ -4,14 +4,15 @@
     "author": "Vitaly Turovsky <vital2580@icloud.com>",
     "license": "MIT",
     "scripts": {
-        "build": "tsx src/datapaths-builder.ts && tsx src/blockEntities.ts && tsx src/newAssetsBuilder.ts && tsx src/genItems.ts && tsx src/genParticles.ts && tsx src/genBlocks.ts && tsx src/itemDefinitionsBuilder.ts && tsx src/copyOtherTextures.ts && tsx src/compressImages.ts && pnpm type-check && pnpm build-consumer && pnpm build-web && tsx src/buildEndChecks.ts && tsx src/changeReadme.ts",
+        "build": "tsx src/datapaths-builder.ts && tsx src/blockEntities.ts && tsx src/entityModels.ts && tsx src/newAssetsBuilder.ts && tsx src/genItems.ts && tsx src/genParticles.ts && tsx src/genBlocks.ts && tsx src/itemDefinitionsBuilder.ts && tsx src/copyOtherTextures.ts && tsx src/compressImages.ts && pnpm type-check && pnpm build-consumer && pnpm build-web && tsx src/buildEndChecks.ts && tsx src/changeReadme.ts",
         "use-cached-datapaths": "mkdir -p ./data && git fetch origin && git --work-tree=./data checkout origin/gh-pages -- . && git reset",
         "type-check": "tsc --noEmit",
         "regen-blockentities": "rm -f dist/blockStatesModels.json && tsx src/blockEntities.ts && tsx src/newAssetsBuilder.ts && tsx src/genBlocks.ts",
         "build-consumer": "tsc -p tsconfig.consumer.json",
         "watch-dist": "tsc -p tsconfig.consumer.json -w",
         "build-web": "pnpm --dir web-demo build",
-        "test": "vitest"
+        "test": "vitest",
+        "regen-entities": "tsx src/entityModels.ts"
     },
     "files": [
         "dist",

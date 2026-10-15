@@ -148,3 +148,14 @@ describe('ItemsRenderer', () => {
         })
     })
 })
+
+describe('ItemsRenderer on 26.3', () => {
+    const renderer = new ItemsRenderer('26.3', blockstatesModels, new AtlasParser(itemsAtlases, ''), new AtlasParser(blocksAtlases, ''))
+
+    // the dried ghast's hydration stages are block/dried_ghast's elements with their own textures
+    it('resolves the dried ghast item without throwing', () => {
+        // not a full block and no item sprite: left to the caller's block model rendering, as the anvil
+        expect(() => renderer.getItemTexture('dried_ghast')).not.toThrow()
+        expect(renderer.getItemTexture('dried_ghast')).toBe(renderer.getItemTexture('anvil'))
+    })
+})

@@ -277,7 +277,8 @@ export class AssetsParser {
             for (const [faceName, face] of Object.entries(elem.faces ?? {})) {
                 if (!face.texture) continue
                 // TODO validate at the validation stage
-                face.texture = this.resolvedModel.textures![face.texture.replace('#', '')] ?? face.texture
+                // a model chain may define no textures (it threw for the 26.3 dried ghast item)
+                face.texture = this.resolvedModel.textures?.[face.texture.replace('#', '')] ?? face.texture
             }
         }
         return {

@@ -287,7 +287,8 @@ const model = store.getModel('26.3', look[0].entry.model)
 ```
 Entities that wear humanoid armor have `armor`: per slot (head, chest, legs, feet) and item, the entries wearing the
 piece adds to the look, and the keys a dye tints (`composeEntityArmor(entity, equipment, colors)` keys them
-`armor/<slot>/<key>`). Every export has `paintings`: the variants in network order (registry ids, or the motive
+`armor/<slot>/<key>`); a baby that wears armor otherwise has it in `armorVariants`, picked by its conditions when
+`composeEntityArmor` is given the look input. Every export has `paintings`: the variants in network order (registry ids, or the motive
 titles before 1.13) with their size and texture, and per size the quads PaintingRenderer draws, uvs within the front
 or the back texture (`store.getPaintings(version)`, `paintingVariant(paintings, idOrName)`).
 

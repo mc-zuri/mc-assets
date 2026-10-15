@@ -28,7 +28,8 @@ describe('entity models', () => {
             // the names this version's own export has (1.8 names entities PigZombie: pig_zombie)
             for (const name of Object.keys(exports.find(e => e.version === version)!.entities)) {
                 const entity = store.getEntity(version, name)!
-                const armor = Object.entries(entity.armor ?? {}).flatMap(([slot, items]) => Object.entries(items).map(([item, piece]) => ({ name: `${slot}=${item}`, look: piece.entries })))
+                const armors = [entity.armor ?? {}, ...(entity.armorVariants ?? []).map(variant => variant.armor)]
+                const armor = armors.flatMap(own => Object.entries(own).flatMap(([slot, items]) => Object.entries(items).map(([item, piece]) => ({ name: `${slot}=${item}`, look: piece.entries }))))
                 for (const state of [...entity.states, ...armor]) {
                     const entries = ((state as { look?: unknown }).look ?? (state as { patch?: unknown }).patch ?? {}) as Record<string, Record<string, unknown> | null>
                     for (const [key, entry] of Object.entries(entries)) {
@@ -332,6 +333,20 @@ describe('head items', () => {
             for (const entries of Object.values(look!.skulls)) {
                 for (const entry of Object.values(entries)) expect(store.getModel(version, entry.model), `${version} ${entry.model}`).toBeTruthy()
             }
+        }
+    })
+})
+
+describe('baby armor', () => {
+    test('a baby zombie wears the armor the game draws on babies, picked by its metadata', () => {
+        for (const version of ['26.3', '1.20.4', '1.8.9']) {
+            const zombie = store.getEntity(version, 'zombie')!
+            const variant = zombie.armorVariants?.[0]
+            expect(variant, version).toBeTruthy()
+            const metadata = Object.fromEntries(variant!.when.map(c => ['index' in c ? c.index : 0, 'value' in c ? c.value : true]))
+            const baby = composeEntityArmor(zombie, { chest: 'iron_chestplate' }, {}, {}, undefined, { metadata })
+            expect(baby.map(({ entry }) => entry), version).toEqual(Object.values(variant!.armor.chest!.iron_chestplate!.entries))
+            expect(composeEntityArmor(zombie, { chest: 'iron_chestplate' })).not.toEqual(baby)
         }
     })
 })

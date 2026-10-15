@@ -137,6 +137,8 @@ export type EntityDefinition = {
     armor?: Record<string, Record<string, EntityArmorPiece>>
     /** skulls and other items worn on the head (CustomHeadLayer), see {@link composeEntityHead} */
     head?: EntityHead
+    /** appearances that wear armor otherwise (a baby: its own armor model, or the adult one made young), with their conditions */
+    armorVariants?: Array<{ when: EntityCondition[], armor: Record<string, Record<string, EntityArmorPiece>> }>
 }
 
 export type EntityArmorPiece = {
@@ -435,19 +437,22 @@ export const trimTexture = (trims: TrimsData, trim: ArmorTrimInput, layer: strin
 }
 
 /**
- * The armor entries an entity draws for what it wears, keyed armor/<slot>/<key>: the pieces exported for it, a dyed
- * piece's dyeable entries tinted with its color (RGB), then a trimmed piece's trim (armor/<slot>/trim/<key>), each a copy
- * of the piece's entry it names with the trim's texture and render type.
+ * The armor entries an entity draws for what it wears, keyed armor/<slot>/<key>: the pieces exported for it (a baby's
+ * when its metadata says it is one), a dyed piece's dyeable entries tinted with its color (RGB), then a trimmed piece's
+ * trim (armor/<slot>/trim/<key>), each a copy of the piece's entry it names with the trim's texture and render type.
  */
 export const composeEntityArmor = (
     entity: EntityDefinition,
     equipment: Partial<Record<string, string | undefined>> = {},
     colors: Partial<Record<string, number | undefined>> = {},
     trims: Partial<Record<string, ArmorTrimInput | undefined>> = {},
-    trimsData?: TrimsData
+    trimsData?: TrimsData,
+    input: EntityLookInput = {}
 ): Array<{ key: string; entry: EntityLookEntry }> => {
     const result: Array<{ key: string; entry: EntityLookEntry }> = []
-    for (const [slot, items] of Object.entries(entity.armor ?? {})) {
+    // a baby wears its own armor (the first variant whose conditions hold)
+    const armor = entity.armorVariants?.find(variant => variant.when.every(condition => conditionHolds(condition, entity, input)))?.armor ?? entity.armor
+    for (const [slot, items] of Object.entries(armor ?? {})) {
         const item = equipment[slot]?.replace(/^minecraft:/, '')
         const piece = item ? items[item] : undefined
         if (!piece) continue

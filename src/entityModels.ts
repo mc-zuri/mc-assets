@@ -50,9 +50,37 @@ export const mergeEntityExports = (exports: EntityModelsExport[]): EntityModelsD
     return merged
 }
 
+/**
+ * For every texture the entity models use, the versions whose other-textures hold an older copy of it, from
+ * data-paths.json: a version key holds what versions before it use (dist/other-textures/<version>/<path>.png), the
+ * latest one is in dist/other-textures/latest.
+ */
+export const textureVersions = (merged: EntityModelsData, dataPaths: Record<string, Record<string, Record<string, string>>>) => {
+    const used = new Set<string>()
+    const collect = (value: unknown) => {
+        if (!value || typeof value !== 'object') return
+        for (const [key, inner] of Object.entries(value as Record<string, unknown>)) {
+            if (key === 'texture' && typeof inner === 'string') used.add(inner.replace(/^minecraft:/, ''))
+            else if (key === 'textureLayers' && Array.isArray(inner)) for (const layer of inner) used.add(String(layer).replace(/^minecraft:/, ''))
+            else collect(inner)
+        }
+    }
+    collect(merged.entities)
+    const versions: Record<string, string[]> = {}
+    for (const [version, paths] of Object.entries(dataPaths)) {
+        if (version === 'latest') continue
+        const textures = paths['textures/'] ?? {}
+        for (const texture of used) {
+            if (textures[`${texture}.png`]) (versions[texture] ??= []).push(version)
+        }
+    }
+    return versions
+}
+
 if (process.argv[1] && path.basename(process.argv[1].replaceAll('\\', '/')).startsWith('entityModels')) {
     const exports = readEntityExports()
     const merged = mergeEntityExports(exports)
+    if (fs.existsSync('./data/data-paths.json')) merged.textureVersions = textureVersions(merged, JSON.parse(fs.readFileSync('./data/data-paths.json', 'utf8')))
     fs.mkdirSync('./dist', { recursive: true })
     fs.writeFileSync('./dist/entityModels.json', JSON.stringify(merged))
     const counts = exports.map(e => `${e.version}: ${Object.keys(e.entities).length} entities, ${Object.keys(e.models).length} models`)

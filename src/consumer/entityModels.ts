@@ -160,6 +160,8 @@ export type EntityModelsExport = {
 /** dist/entityModels.json: every exported version merged, mc-assets' versioned layout (a version key holds what was before it). */
 export type EntityModelsData = {
     versions: string[]
+    /** per texture (entity/zombie/zombie) the other-textures versions holding what versions before them use */
+    textureVersions?: Record<string, string[]>
     models: Record<string, Record<string, EntityModelLayer>>
     entities: Record<string, Record<string, EntityDefinition>>
     animations: Record<string, Record<string, EntityAnimation>>
@@ -262,6 +264,23 @@ export const applyEntityPatch = (look: Map<string, Record<string, unknown>>, pat
             else current[property] = structuredClone(value)
         }
     }
+}
+
+const semver = (version: string) => {
+    const [x, y = '0', z = '0'] = version.split('.')
+    return +`${x!.padStart(2, '0')}${y.padStart(2, '0')}${z.padStart(2, '0')}`
+}
+
+/**
+ * The other-textures folder a version reads a texture from: the oldest version key above it that holds a copy, else
+ * latest (dist/other-textures/<folder>/<path>.png).
+ */
+export const entityTextureFolder = (data: Pick<EntityModelsData, 'textureVersions'>, texture: string, version: string) => {
+    const path = texture.replace(/^minecraft:/, '')
+    const versions = data.textureVersions?.[path]
+    if (!versions?.length || !version) return 'latest'
+    const sorted = [...versions].sort((a, b) => semver(a) - semver(b))
+    return sorted.find(key => semver(version) < semver(key)) ?? 'latest'
 }
 
 /** Equipment slot names in the order of the game's EquipmentSlot (the protocol's slot ids). */

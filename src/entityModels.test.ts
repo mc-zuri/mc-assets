@@ -2,7 +2,7 @@ import { describe, test, expect } from 'vitest'
 import fs from 'fs'
 import path from 'path/posix'
 
-import { composeEntityLook, EntityDefinition, EntityModelsData, EntityModelsExport, EntityModelsStore } from './consumer/entityModels'
+import { composeEntityLook, entityTextureFolder, EntityDefinition, EntityModelsData, EntityModelsExport, EntityModelsStore } from './consumer/entityModels'
 import { mergeEntityExports, readEntityExports } from './entityModels'
 
 const data = JSON.parse(fs.readFileSync('./dist/entityModels.json', 'utf8')) as EntityModelsData
@@ -111,5 +111,24 @@ describe('merging exports', () => {
         expect(texture('1.21.8')).toBe('cow')
         expect(texture('1.16.5')).toBe('cow')
         expect(store.getModel('1.16.5', 'm')).toEqual({ textureSize: [64, 64], root: {} })
+    })
+})
+
+describe('entity textures by version', () => {
+    test('a version reads an older copy where other-textures keeps one', () => {
+        expect(entityTextureFolder(data, 'minecraft:entity/iron_golem/iron_golem', '1.15.2')).toBe('1.19')
+        expect(entityTextureFolder(data, 'minecraft:entity/iron_golem/iron_golem', '1.19')).toBe('latest')
+        expect(entityTextureFolder(data, 'minecraft:entity/iron_golem/iron_golem', '26.3')).toBe('latest')
+    })
+
+    test('every folder a version reads a texture from has it', () => {
+        const missing: string[] = []
+        for (const version of data.versions) {
+            for (const texture of Object.keys(data.textureVersions ?? {})) {
+                const folder = entityTextureFolder(data, texture, version)
+                if (!fs.existsSync(path.join('./dist/other-textures', folder, `${texture}.png`))) missing.push(`${version}: ${folder}/${texture}`)
+            }
+        }
+        expect(missing).toEqual([])
     })
 })

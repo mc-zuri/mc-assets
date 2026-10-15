@@ -285,6 +285,12 @@ const look = composeEntityLook(wolf, { metadata: { 18: 4, 23: 0 }, equipment: { 
 // [{ key: 'minecraft:wolf#main#1', entry: { type: 'model', model: 'minecraft:wolf#main', texture: 'minecraft:entity/wolf/wolf_ashen_tame', ... } }, ...]
 const model = store.getModel('26.3', look[0].entry.model)
 ```
+Entities that wear humanoid armor have `armor`: per slot (head, chest, legs, feet) and item, the entries wearing the
+piece adds to the look, and the keys a dye tints (`composeEntityArmor(entity, equipment, colors)` keys them
+`armor/<slot>/<key>`). Every export has `paintings`: the variants in network order (registry ids, or the motive
+titles before 1.13) with their size and texture, and per size the quads PaintingRenderer draws, uvs within the front
+or the back texture (`store.getPaintings(version)`, `paintingVariant(paintings, idOrName)`).
+
 Every export is also its own file, `dist/entityModels/<version>.json` (the same layout, the export as `latest`), with
 `dist/entityModelsIndex.json` listing the exported versions and the older texture copies; a reader loads only the export
 a world version uses:

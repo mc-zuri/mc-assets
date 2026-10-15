@@ -133,6 +133,36 @@ export type EntityDefinition = {
     defaults?: Record<string, unknown>
     /** empty for entities that draw nothing (markers) */
     states: EntityState[]
+    /** humanoid armor: per slot (head, chest, legs, feet) and item, what wearing it adds to the look */
+    armor?: Record<string, Record<string, EntityArmorPiece>>
+}
+
+export type EntityArmorPiece = {
+    /** the entries drawn for the piece, as the game draws it worn alone (keys as in a look) */
+    entries: Record<string, EntityLookEntry>
+    /** keys whose tint is the piece's dye color when it is dyed (leather) */
+    dyeable?: string[]
+}
+
+/** A painting variant: size in blocks, texture and the part of it the painting shows (all of it when not given). */
+export type PaintingVariant = {
+    /** registry id (minecraft:kebab), or the motive's title before 1.13 (Kebab) */
+    id: string
+    width: number
+    height: number
+    texture: string
+    rect?: [number, number, number, number]
+}
+
+/** A quad PaintingRenderer draws: four vertices x, y, z (blocks, the painting facing north) and u, v within its texture's rectangle. */
+export type PaintingQuad = { face: 'front' | 'back'; vertices: Array<[number, number, number, number, number]> }
+
+/** How a version draws paintings: its variants (network order) and the quads of each size. */
+export type PaintingsData = {
+    back: { texture: string; rect?: [number, number, number, number] }
+    variants: PaintingVariant[]
+    /** by size, "<width>x<height>" in blocks */
+    templates: Record<string, PaintingQuad[]>
 }
 
 export type EntityAnimationKeyframe = {
@@ -155,6 +185,7 @@ export type EntityModelsExport = {
     models: Record<string, EntityModelLayer>
     entities: Record<string, EntityDefinition>
     animations: Record<string, EntityAnimation>
+    paintings?: PaintingsData
 }
 
 /** dist/entityModels.json: every exported version merged, mc-assets' versioned layout (a version key holds what was before it). */
@@ -167,6 +198,8 @@ export type EntityModelsData = {
     models: Record<string, Record<string, EntityModelLayer>>
     entities: Record<string, Record<string, EntityDefinition>>
     animations: Record<string, Record<string, EntityAnimation>>
+    /** by version, under the key 'paintings' */
+    paintings?: Record<string, Record<string, PaintingsData>>
 }
 
 /** dist/entityModelsIndex.json: what a reader needs before loading an export. */
@@ -196,14 +229,21 @@ export class EntityModelsStore {
     private models = new VersionedStore<EntityModelLayer>()
     private entities = new VersionedStore<EntityDefinition>()
     private animations = new VersionedStore<EntityAnimation>()
+    private paintings = new VersionedStore<PaintingsData>()
     readonly versions: string[]
 
     constructor(data: EntityModelsData) {
         this.versions = data.versions
-        for (const store of [this.models, this.entities, this.animations]) store.inclusive = false
+        for (const store of [this.models, this.entities, this.animations, this.paintings]) store.inclusive = false
         this.models.loadData(data.models as any)
         this.entities.loadData(data.entities as any)
         this.animations.loadData(data.animations as any)
+        this.paintings.loadData((data.paintings ?? { latest: {} }) as any)
+    }
+
+    /** How the version draws paintings. */
+    getPaintings(version: string) {
+        return this.paintings.get(version, 'paintings')
     }
 
     /** The oldest exported version is used for older versions. */
@@ -225,6 +265,8 @@ export type EntityLookInput = {
     metadata?: Record<number, unknown> | unknown[]
     /** equipment by slot name, item names without namespace */
     equipment?: Partial<Record<string, string | undefined>>
+    /** dye colors (RGB) of dyed equipment by slot (leather armor) */
+    equipmentColors?: Partial<Record<string, number | undefined>>
 }
 
 const toNumber = (value: unknown): number | undefined => {
@@ -306,6 +348,37 @@ export const entityTextureFolder = (data: Pick<EntityModelsData, 'textureVersion
     if (!versions?.length || !version) return 'latest'
     const sorted = [...versions].sort((a, b) => semver(a) - semver(b))
     return sorted.find(key => semver(version) < semver(key)) ?? 'latest'
+}
+
+/**
+ * The armor entries an entity draws for what it wears, keyed armor/<slot>/<key>: the pieces exported for it, a dyed
+ * piece's dyeable entries tinted with its color (RGB).
+ */
+export const composeEntityArmor = (
+    entity: EntityDefinition,
+    equipment: Partial<Record<string, string | undefined>> = {},
+    colors: Partial<Record<string, number | undefined>> = {}
+): Array<{ key: string; entry: EntityLookEntry }> => {
+    const result: Array<{ key: string; entry: EntityLookEntry }> = []
+    for (const [slot, items] of Object.entries(entity.armor ?? {})) {
+        const item = equipment[slot]?.replace(/^minecraft:/, '')
+        const piece = item ? items[item] : undefined
+        if (!piece) continue
+        const color = colors[slot]
+        for (const [key, entry] of Object.entries(piece.entries)) {
+            const tinted = color !== undefined && piece.dyeable?.includes(key) ? { ...entry, tint: (0xff_00_00_00 | color) >> 0 } : entry
+            result.push({ key: `armor/${slot}/${key}`, entry: tinted as EntityLookEntry })
+        }
+    }
+    return result
+}
+
+/** The painting variant of a network id (registry id, or index), or of an id or title. */
+export const paintingVariant = (paintings: PaintingsData, variant: number | string | undefined) => {
+    if (variant === undefined || variant === null) return undefined
+    if (typeof variant === 'number') return paintings.variants[variant]
+    const id = variant.includes(':') || variant !== variant.toLowerCase() ? variant : `minecraft:${variant}`
+    return paintings.variants.find(v => v.id === variant || v.id === id || v.id.toLowerCase() === variant.toLowerCase())
 }
 
 /** Equipment slot names in the order of the game's EquipmentSlot (the protocol's slot ids). */

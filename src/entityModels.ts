@@ -31,28 +31,30 @@ export const singleEntityExport = (merged: EntityModelsData, data: EntityModelsE
     textureVersions: merged.textureVersions,
     models: { latest: data.models },
     entities: { latest: data.entities },
-    animations: { latest: data.animations }
+    animations: { latest: data.animations },
+    paintings: { latest: data.paintings ? { paintings: data.paintings } : {} }
 })
 
 /** Versions oldest first. A value is stored again only where it differs from the next newer export. */
 export const mergeEntityExports = (exports: EntityModelsExport[]): EntityModelsData => {
-    const merged: EntityModelsData = { versions: exports.map(e => e.version), models: { latest: {} }, entities: { latest: {} }, animations: { latest: {} } }
+    const merged: EntityModelsData = { versions: exports.map(e => e.version), models: { latest: {} }, entities: { latest: {} }, animations: { latest: {} }, paintings: { latest: {} } }
     const newestFirst = [...exports].reverse()
-    for (const kind of ['models', 'entities', 'animations'] as const) {
+    for (const kind of ['models', 'entities', 'animations', 'paintings'] as const) {
         // the newer export's value of each key, to store only changes; the key a change goes under is the newer version
         let newer: { version: string, values: Record<string, unknown> } | undefined
         for (const data of newestFirst) {
-            const values = data[kind] as Record<string, unknown>
+            const values = (kind === 'paintings' ? (data.paintings ? { paintings: data.paintings } : {}) : data[kind]) as Record<string, unknown>
             for (const [key, value] of Object.entries(values)) {
                 if (!newer) {
-                    (merged[kind].latest as Record<string, unknown>)[key] = value
+                    ((merged[kind] as Record<string, Record<string, unknown>>).latest!)[key] = value
                     continue
                 }
                 const newerValue = newer.values[key]
                 if (newerValue !== undefined && JSON.stringify(newerValue) === JSON.stringify(value)) continue
                 // the value differs from the newer export's (or the key is gone there): older versions read it from here
-                merged[kind][newer.version] ??= {}
-                ;(merged[kind][newer.version] as Record<string, unknown>)[key] = value
+                const byVersion = merged[kind] as Record<string, Record<string, unknown>>
+                byVersion[newer.version] ??= {}
+                byVersion[newer.version]![key] = value
             }
             newer = { version: data.version, values }
         }
@@ -76,6 +78,7 @@ export const textureVersions = (merged: EntityModelsData, dataPaths: Record<stri
         }
     }
     collect(merged.entities)
+    collect(merged.paintings)
     const versions: Record<string, string[]> = {}
     for (const [version, paths] of Object.entries(dataPaths)) {
         if (version === 'latest') continue

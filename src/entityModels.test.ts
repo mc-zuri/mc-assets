@@ -2,7 +2,7 @@ import { describe, test, expect } from 'vitest'
 import fs from 'fs'
 import path from 'path/posix'
 
-import { composeEntityLook, entityModelsExportFor, entityTextureFolder, EntityDefinition, EntityModelsData, EntityModelsExport, EntityModelsIndex, EntityModelsStore } from './consumer/entityModels'
+import { composeEntityArmor, composeEntityLook, entityModelsExportFor, paintingVariant, entityTextureFolder, EntityDefinition, EntityModelsData, EntityModelsExport, EntityModelsIndex, EntityModelsStore } from './consumer/entityModels'
 import { mergeEntityExports, readEntityExports } from './entityModels'
 
 const data = JSON.parse(fs.readFileSync('./dist/entityModels.json', 'utf8')) as EntityModelsData
@@ -27,8 +27,9 @@ describe('entity models', () => {
             // the names this version's own export has (1.8 names entities PigZombie: pig_zombie)
             for (const name of Object.keys(exports.find(e => e.version === version)!.entities)) {
                 const entity = store.getEntity(version, name)!
-                for (const state of entity.states) {
-                    const entries = (state.look ?? state.patch ?? {}) as Record<string, Record<string, unknown> | null>
+                const armor = Object.entries(entity.armor ?? {}).flatMap(([slot, items]) => Object.entries(items).map(([item, piece]) => ({ name: `${slot}=${item}`, look: piece.entries })))
+                for (const state of [...entity.states, ...armor]) {
+                    const entries = ((state as { look?: unknown }).look ?? (state as { patch?: unknown }).patch ?? {}) as Record<string, Record<string, unknown> | null>
                     for (const [key, entry] of Object.entries(entries)) {
                         if (!entry) continue
                         if (entry.model && !store.getModel(version, entry.model as string)) missing.push(`${name}[${state.name}] ${key}: model ${entry.model}`)
@@ -37,6 +38,11 @@ describe('entity models', () => {
                         if (texture && !texture.includes(':atlas/') && !fs.existsSync(texturePath(texture, version))) missing.push(`${name}[${state.name}] ${key}: texture ${texture}`)
                     }
                 }
+            }
+            // paintings: every variant's texture and the back
+            const paintings = store.getPaintings(version)
+            for (const texture of paintings ? [paintings.back.texture, ...paintings.variants.map(v => v.texture)] : []) {
+                if (!fs.existsSync(texturePath(texture, version))) missing.push(`painting: texture ${texture}`)
             }
             expect(missing).toEqual([])
         })
@@ -191,5 +197,21 @@ describe('one file per export', () => {
             for (const name of Object.keys(exported.entities)) expect(own.getEntity(version, name), `${version} ${name}`).toEqual(store.getEntity(version, name))
             for (const layer of Object.keys(exported.models)) expect(own.getModel(version, layer), `${version} ${layer}`).toEqual(store.getModel(version, layer))
         }
+    })
+})
+
+describe('armor and paintings', () => {
+    test('a zombie wears armor, a dyed leather piece tinted', () => {
+        const zombie = store.getEntity(latest, 'zombie')!
+        const armor = composeEntityArmor(zombie, { head: 'leather_helmet', feet: 'iron_boots' }, { head: 0x123456 })
+        expect(armor.some(({ key }) => key.startsWith('armor/feet/'))).toBe(true)
+        expect(armor.filter(({ key }) => key.startsWith('armor/head/')).some(({ entry }) => (entry as { tint?: number }).tint === (0xff123456 | 0))).toBe(true)
+    })
+
+    test('paintings: variants by network id or name, a template per size', () => {
+        const paintings = store.getPaintings(latest)!
+        expect(paintingVariant(paintings, 0)).toBe(paintings.variants[0])
+        expect(paintingVariant(paintings, 'kebab')?.id).toBe('minecraft:kebab')
+        for (const variant of paintings.variants) expect(paintings.templates[`${variant.width}x${variant.height}`], variant.id).toBeTruthy()
     })
 })

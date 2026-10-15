@@ -291,6 +291,20 @@ piece adds to the look, and the keys a dye tints (`composeEntityArmor(entity, eq
 titles before 1.13) with their size and texture, and per size the quads PaintingRenderer draws, uvs within the front
 or the back texture (`store.getPaintings(version)`, `paintingVariant(paintings, idOrName)`).
 
+From 1.19.4, a trimmable piece has `trim`: the trim's entries, each a copy of one of the piece's entries with the trim's
+texture and render type. `store.getTrims(version)` names trim textures from the pattern, the material and the piece
+(`trimTexture`); `composeEntityArmor(entity, equipment, colors, trims, store.getTrims(version))` adds them, keyed
+`armor/<slot>/trim/<key>`, for trims given by network id or id (`{ pattern: 'coast', material: 'minecraft:iron' }`). The
+game makes trim textures at runtime (paletted permutations of the patterns); the build makes the same images from each
+version's textures, checks each against the digest of the game's (`custom/entities/<version>/trimTextures.json`), and
+writes them to `dist/other-textures` like the other entity textures (`trims/models/armor/...` to 1.21.1,
+`trims/entity/humanoid/...` since).
+
+Entities with a head layer have `head`: what is drawn for skulls and other items worn on the head, relative to the
+model's head (`composeEntityHead(entity, input, { name, metadata })`: the anchor, then a skull's entries or the pose the
+item is drawn with before its display transform; nothing for head armor). A reader moves along the anchor's `chain`
+parts as posed (head look) from the anchor's `transform`, then applies the relative transform.
+
 Every export is also its own file, `dist/entityModels/<version>.json` (the same layout, the export as `latest`), with
 `dist/entityModelsIndex.json` listing the exported versions and the older texture copies; a reader loads only the export
 a world version uses:

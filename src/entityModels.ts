@@ -97,7 +97,9 @@ if (process.argv[1] && path.basename(process.argv[1].replaceAll('\\', '/')).star
     fs.rmSync('./dist/entityModels', { recursive: true, force: true })
     fs.mkdirSync('./dist/entityModels', { recursive: true })
     for (const data of exports) fs.writeFileSync(`./dist/entityModels/${data.version}.json`, JSON.stringify(singleEntityExport(merged, data)))
-    const index: EntityModelsIndex = { versions: merged.versions, textureVersions: merged.textureVersions ?? {} }
+    const entityExports: Record<string, string[]> = {}
+    for (const data of exports) for (const name of Object.keys(data.entities)) (entityExports[name] ??= []).push(data.version)
+    const index: EntityModelsIndex = { versions: merged.versions, textureVersions: merged.textureVersions ?? {}, entityExports }
     fs.writeFileSync('./dist/entityModelsIndex.json', JSON.stringify(index))
     const counts = exports.map(e => `${e.version}: ${Object.keys(e.entities).length} entities, ${Object.keys(e.models).length} models`)
     console.log(`entityModels.json: ${counts.join('; ') || 'no exports'}`)

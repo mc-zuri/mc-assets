@@ -170,7 +170,11 @@ export type EntityModelsData = {
 }
 
 /** dist/entityModelsIndex.json: what a reader needs before loading an export. */
-export type EntityModelsIndex = Pick<EntityModelsData, 'versions'> & { textureVersions: NonNullable<EntityModelsData['textureVersions']> }
+export type EntityModelsIndex = Pick<EntityModelsData, 'versions'> & {
+    textureVersions: NonNullable<EntityModelsData['textureVersions']>
+    /** per entity name, the exports that have it (an entity behind a feature flag is missing from the release before) */
+    entityExports: Record<string, string[]>
+}
 
 /**
  * The export a world version reads (dist/entityModels/<export>.json): the newest export not newer than it, else the

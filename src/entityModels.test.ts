@@ -181,6 +181,8 @@ describe('one file per export', () => {
     test('each file draws what the merged data draws for its versions', () => {
         const index = JSON.parse(fs.readFileSync('./dist/entityModelsIndex.json', 'utf8')) as EntityModelsIndex
         expect(index.versions).toEqual(data.versions)
+        expect(index.entityExports.camel).not.toContain('1.19.4')
+        expect(index.entityExports.pig_zombie).toEqual(['1.8.9', '1.9.4', '1.10.2'])
         for (const version of data.versions) {
             const single = JSON.parse(fs.readFileSync(`./dist/entityModels/${version}.json`, 'utf8')) as EntityModelsData
             expect(single.exportVersion).toBe(version)

@@ -285,6 +285,17 @@ const look = composeEntityLook(wolf, { metadata: { 18: 4, 23: 0 }, equipment: { 
 // [{ key: 'minecraft:wolf#main#1', entry: { type: 'model', model: 'minecraft:wolf#main', texture: 'minecraft:entity/wolf/wolf_ashen_tame', ... } }, ...]
 const model = store.getModel('26.3', look[0].entry.model)
 ```
+Every export is also its own file, `dist/entityModels/<version>.json` (the same layout, the export as `latest`), with
+`dist/entityModelsIndex.json` listing the exported versions and the older texture copies; a reader loads only the export
+a world version uses:
+
+```ts
+import { EntityModelsStore, entityModelsExportFor } from 'mc-assets/dist/entityModels'
+import index from 'mc-assets/dist/entityModelsIndex.json'
+
+const exported = entityModelsExportFor(index.versions, '1.12') // 1.11.2: the newest export not newer than 1.12
+const store = new EntityModelsStore(await (await fetch(`entity-models/${exported}.json`)).json())
+```
 
 ## Building
 

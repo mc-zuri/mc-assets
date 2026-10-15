@@ -160,11 +160,32 @@ export type EntityModelsExport = {
 /** dist/entityModels.json: every exported version merged, mc-assets' versioned layout (a version key holds what was before it). */
 export type EntityModelsData = {
     versions: string[]
+    /** in dist/entityModels/<version>.json: the one export the file holds (as latest) */
+    exportVersion?: string
     /** per texture (entity/zombie/zombie) the other-textures versions holding what versions before them use */
     textureVersions?: Record<string, string[]>
     models: Record<string, Record<string, EntityModelLayer>>
     entities: Record<string, Record<string, EntityDefinition>>
     animations: Record<string, Record<string, EntityAnimation>>
+}
+
+/** dist/entityModelsIndex.json: what a reader needs before loading an export. */
+export type EntityModelsIndex = Pick<EntityModelsData, 'versions'> & { textureVersions: NonNullable<EntityModelsData['textureVersions']> }
+
+/**
+ * The export a world version reads (dist/entityModels/<export>.json): the newest export not newer than it, else the
+ * oldest export.
+ */
+export const entityModelsExportFor = (versions: string[], version: string) => {
+    const sorted = [...versions].sort((a, b) => semverNumber(a) - semverNumber(b))
+    let result = sorted[0]
+    for (const exported of sorted) if (semverNumber(exported) <= semverNumber(version)) result = exported
+    return result
+}
+
+const semverNumber = (version: string) => {
+    const [x, y = '0', z = '0'] = version.split('.')
+    return +`${x!.padStart(2, '0')}${y.padStart(2, '0')}${z.padStart(2, '0')}`
 }
 
 export class EntityModelsStore {

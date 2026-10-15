@@ -3,7 +3,7 @@
 // for the models, entities and animations that changed in that version, what older versions use.
 import fs from 'fs'
 import path from 'path/posix'
-import { EntityModelsData, EntityModelsExport } from './consumer/entityModels'
+import { EntityModelsData, EntityModelsIndex, EntityModelsExport } from './consumer/entityModels'
 
 const sourceDir = './custom/entities'
 
@@ -23,6 +23,16 @@ export const readEntityExports = (dir = sourceDir): EntityModelsExport[] => {
             return data
         })
 }
+
+/** One export in the merged layout, every value latest: dist/entityModels/<version>.json. */
+export const singleEntityExport = (merged: EntityModelsData, data: EntityModelsExport): EntityModelsData => ({
+    versions: merged.versions,
+    exportVersion: data.version,
+    textureVersions: merged.textureVersions,
+    models: { latest: data.models },
+    entities: { latest: data.entities },
+    animations: { latest: data.animations }
+})
 
 /** Versions oldest first. A value is stored again only where it differs from the next newer export. */
 export const mergeEntityExports = (exports: EntityModelsExport[]): EntityModelsData => {
@@ -83,6 +93,12 @@ if (process.argv[1] && path.basename(process.argv[1].replaceAll('\\', '/')).star
     if (fs.existsSync('./data/data-paths.json')) merged.textureVersions = textureVersions(merged, JSON.parse(fs.readFileSync('./data/data-paths.json', 'utf8')))
     fs.mkdirSync('./dist', { recursive: true })
     fs.writeFileSync('./dist/entityModels.json', JSON.stringify(merged))
+    // one file per export, for readers that load only the export a world version uses
+    fs.rmSync('./dist/entityModels', { recursive: true, force: true })
+    fs.mkdirSync('./dist/entityModels', { recursive: true })
+    for (const data of exports) fs.writeFileSync(`./dist/entityModels/${data.version}.json`, JSON.stringify(singleEntityExport(merged, data)))
+    const index: EntityModelsIndex = { versions: merged.versions, textureVersions: merged.textureVersions ?? {} }
+    fs.writeFileSync('./dist/entityModelsIndex.json', JSON.stringify(index))
     const counts = exports.map(e => `${e.version}: ${Object.keys(e.entities).length} entities, ${Object.keys(e.models).length} models`)
     console.log(`entityModels.json: ${counts.join('; ') || 'no exports'}`)
 }

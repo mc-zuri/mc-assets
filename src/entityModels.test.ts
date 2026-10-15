@@ -2,7 +2,7 @@ import { describe, test, expect } from 'vitest'
 import fs from 'fs'
 import path from 'path/posix'
 
-import { composeEntityLook, entityTextureFolder, EntityDefinition, EntityModelsData, EntityModelsExport, EntityModelsStore } from './consumer/entityModels'
+import { composeEntityLook, entityModelsExportFor, entityTextureFolder, EntityDefinition, EntityModelsData, EntityModelsExport, EntityModelsIndex, EntityModelsStore } from './consumer/entityModels'
 import { mergeEntityExports, readEntityExports } from './entityModels'
 
 const data = JSON.parse(fs.readFileSync('./dist/entityModels.json', 'utf8')) as EntityModelsData
@@ -166,5 +166,28 @@ describe('entity textures by version', () => {
             }
         }
         expect(missing).toEqual([])
+    })
+})
+
+describe('one file per export', () => {
+    test('a world version reads the newest export not newer than it', () => {
+        expect(entityModelsExportFor(data.versions, '1.8.8')).toBe('1.8.9')
+        expect(entityModelsExportFor(data.versions, '1.12')).toBe('1.11.2')
+        expect(entityModelsExportFor(data.versions, '1.21.3')).toBe('1.21.2')
+        expect(entityModelsExportFor(data.versions, '26.3')).toBe('26.3')
+        expect(entityModelsExportFor(data.versions, '27.1')).toBe('26.3')
+    })
+
+    test('each file draws what the merged data draws for its versions', () => {
+        const index = JSON.parse(fs.readFileSync('./dist/entityModelsIndex.json', 'utf8')) as EntityModelsIndex
+        expect(index.versions).toEqual(data.versions)
+        for (const version of data.versions) {
+            const single = JSON.parse(fs.readFileSync(`./dist/entityModels/${version}.json`, 'utf8')) as EntityModelsData
+            expect(single.exportVersion).toBe(version)
+            const own = new EntityModelsStore(single)
+            const exported = exports.find(e => e.version === version)!
+            for (const name of Object.keys(exported.entities)) expect(own.getEntity(version, name), `${version} ${name}`).toEqual(store.getEntity(version, name))
+            for (const layer of Object.keys(exported.models)) expect(own.getModel(version, layer), `${version} ${layer}`).toEqual(store.getModel(version, layer))
+        }
     })
 })

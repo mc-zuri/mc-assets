@@ -4,6 +4,7 @@
 import fs from 'fs'
 import path from 'path/posix'
 import { EntityModelsData, EntityModelsIndex, EntityModelsExport } from './consumer/entityModels'
+import { encodePng, makeTrimTextures, TrimTextureSource } from './trimTextures'
 
 const sourceDir = './custom/entities'
 
@@ -32,18 +33,19 @@ export const singleEntityExport = (merged: EntityModelsData, data: EntityModelsE
     models: { latest: data.models },
     entities: { latest: data.entities },
     animations: { latest: data.animations },
-    paintings: { latest: data.paintings ? { paintings: data.paintings } : {} }
+    paintings: { latest: data.paintings ? { paintings: data.paintings } : {} },
+    trims: { latest: data.trims ? { trims: data.trims } : {} }
 })
 
 /** Versions oldest first. A value is stored again only where it differs from the next newer export. */
 export const mergeEntityExports = (exports: EntityModelsExport[]): EntityModelsData => {
-    const merged: EntityModelsData = { versions: exports.map(e => e.version), models: { latest: {} }, entities: { latest: {} }, animations: { latest: {} }, paintings: { latest: {} } }
+    const merged: EntityModelsData = { versions: exports.map(e => e.version), models: { latest: {} }, entities: { latest: {} }, animations: { latest: {} }, paintings: { latest: {} }, trims: { latest: {} } }
     const newestFirst = [...exports].reverse()
-    for (const kind of ['models', 'entities', 'animations', 'paintings'] as const) {
+    for (const kind of ['models', 'entities', 'animations', 'paintings', 'trims'] as const) {
         // the newer export's value of each key, to store only changes; the key a change goes under is the newer version
         let newer: { version: string, values: Record<string, unknown> } | undefined
         for (const data of newestFirst) {
-            const values = (kind === 'paintings' ? (data.paintings ? { paintings: data.paintings } : {}) : data[kind]) as Record<string, unknown>
+            const values = (kind === 'paintings' ? (data.paintings ? { paintings: data.paintings } : {}) : kind === 'trims' ? (data.trims ? { trims: data.trims } : {}) : data[kind]) as Record<string, unknown>
             for (const [key, value] of Object.entries(values)) {
                 if (!newer) {
                     ((merged[kind] as Record<string, Record<string, unknown>>).latest!)[key] = value
@@ -90,10 +92,63 @@ export const textureVersions = (merged: EntityModelsData, dataPaths: Record<stri
     return versions
 }
 
+/** The trim textures each export draws (custom/entities/<version>/trimTextures.json, 1.19.4+), by version. */
+export const readTrimTextureSources = (dir = sourceDir): Record<string, Record<string, TrimTextureSource>> => {
+    const sources: Record<string, Record<string, TrimTextureSource>> = {}
+    if (!fs.existsSync(dir)) return sources
+    for (const version of fs.readdirSync(dir)) {
+        const file = path.join(dir, version, 'trimTextures.json')
+        if (fs.existsSync(file)) sources[version] = JSON.parse(fs.readFileSync(file, 'utf8'))
+    }
+    return sources
+}
+
+/**
+ * Makes the trim textures of every export from its version's textures (each checked against the game's image) and writes
+ * them where a version's textures are read from: the newest export's to other-textures/latest, an older export's that
+ * differ from the next export's to other-textures/<next export>/ (what versions before it use). Returns, per texture path,
+ * the folders holding older copies (textureVersions).
+ */
+export const writeTrimTextures = (versions: string[], sources: Record<string, Record<string, TrimTextureSource>>, dataPaths: Record<string, Record<string, Record<string, string>>>, outDir = './dist/other-textures') => {
+    const sorted = [...versions].sort((a, b) => semverToNumber(a) - semverToNumber(b))
+    const folders: Record<string, string[]> = {}
+    let newer: Record<string, TrimTextureSource> | undefined
+    let written = 0
+    for (let i = sorted.length - 1; i >= 0; i--) {
+        const version = sorted[i]!
+        const own = sources[version]
+        if (!own) {
+            newer = undefined
+            continue
+        }
+        const images = makeTrimTextures(version, own, dataPaths)
+        for (const [name, image] of images) {
+            const texture = name.replace(/^minecraft:/, '')
+            if (newer?.[name]?.sha256 === own[name]!.sha256) continue
+            const folder = i === sorted.length - 1 ? 'latest' : sorted[i + 1]!
+            const file = path.join(outDir, folder, `${texture}.png`)
+            fs.mkdirSync(path.dirname(file), { recursive: true })
+            fs.writeFileSync(file, encodePng(image))
+            if (folder !== 'latest') (folders[texture] ??= []).push(folder)
+            written++
+        }
+        newer = own
+    }
+    for (const list of Object.values(folders)) list.sort((a, b) => semverToNumber(a) - semverToNumber(b))
+    return { folders, written }
+}
+
 if (process.argv[1] && path.basename(process.argv[1].replaceAll('\\', '/')).startsWith('entityModels')) {
     const exports = readEntityExports()
     const merged = mergeEntityExports(exports)
-    if (fs.existsSync('./data/data-paths.json')) merged.textureVersions = textureVersions(merged, JSON.parse(fs.readFileSync('./data/data-paths.json', 'utf8')))
+    if (fs.existsSync('./data/data-paths.json')) {
+        const dataPaths = JSON.parse(fs.readFileSync('./data/data-paths.json', 'utf8'))
+        merged.textureVersions = textureVersions(merged, dataPaths)
+        // the trim textures the game makes at runtime, made the same way and checked against the game's
+        const trims = writeTrimTextures(merged.versions, readTrimTextureSources(), dataPaths)
+        for (const [texture, folders] of Object.entries(trims.folders)) merged.textureVersions[texture] = folders
+        console.log(`trim textures: ${trims.written} written`)
+    }
     fs.mkdirSync('./dist', { recursive: true })
     fs.writeFileSync('./dist/entityModels.json', JSON.stringify(merged))
     // one file per export, for readers that load only the export a world version uses

@@ -135,6 +135,8 @@ export type EntityDefinition = {
     states: EntityState[]
     /** humanoid armor: per slot (head, chest, legs, feet) and item, what wearing it adds to the look */
     armor?: Record<string, Record<string, EntityArmorPiece>>
+    /** skulls and other items worn on the head (CustomHeadLayer), see {@link composeEntityHead} */
+    head?: EntityHead
 }
 
 export type EntityArmorPiece = {
@@ -142,6 +144,54 @@ export type EntityArmorPiece = {
     entries: Record<string, EntityLookEntry>
     /** keys whose tint is the piece's dye color when it is dyed (leather) */
     dyeable?: string[]
+    /** the piece trimmed (1.19.4+): drawn over it, see {@link composeEntityArmor} */
+    trim?: EntityArmorTrim
+}
+
+/** What a trimmed piece draws over itself: per trim entry, the piece's entry it copies with the trim's texture and render type. */
+export type EntityArmorTrim = {
+    /** the layer the trim's texture is named for: humanoid, humanoid_leggings */
+    layer: string
+    /** what the materials' overrides are keyed by: the armor material before 1.20.5 (iron), its key (minecraft:iron) or equipment asset since */
+    asset: string
+    /** trim entry key -> the key of the piece's entry it copies (all but texture, render type and tint) */
+    entries: Record<string, string>
+}
+
+/** How a version names trim textures: patterns and materials in network order (registry ids), layers, render types. */
+export type TrimsData = {
+    patterns: Array<{ id: string, asset: string, decal?: boolean }>
+    /** suffix: the material's texture suffix; overrides: by armor asset, another suffix (iron on iron armor: iron_darker) */
+    materials: Array<{ id: string, suffix: string, overrides?: Record<string, string> }>
+    /** texture: <pattern namespace>:<prefix><pattern path><separator><suffix> */
+    layers: Record<string, { prefix: string, separator: string }>
+    renderTypes: { normal: string, decal: string }
+}
+
+/** Where the head layer draws from: the parts of a model it moves along, in order, and the pose before the first. */
+export type EntityHeadAnchor = {
+    /** the layer the parts are of, a key of the models */
+    model: string
+    /** part paths, each moved along as ModelPart.translateAndRotate does (position, then z, y, x rotation) */
+    chain: string[]
+    /** column major 4x4: entity space from the space the chain starts in */
+    transform: number[]
+}
+
+/** What the head layer draws (CustomHeadLayer), relative to the anchor's frame: the pose after the chain's last part. */
+export type EntityHeadLook = {
+    anchor: EntityHeadAnchor
+    /** per skull item (minecraft-data's name; skull:<damage> before 1.13) its model entries, transforms relative to the frame */
+    skulls: Record<string, Record<string, EntityModelEntry>>
+    /** any other item worn on the head (not head armor): drawn as the item, this pose before its display transform; before 1.9 only blocks */
+    item?: { transform: number[], context: string, items: 'any' | 'blocks' }
+    /** what wearing a skull or an item changes in the rest of the look */
+    worn?: { skull?: NonNullable<EntityState['patch']>, item?: NonNullable<EntityState['patch']> }
+}
+
+/** The head layer: its default look, and appearances that draw head items otherwise (a baby's anchor). */
+export type EntityHead = EntityHeadLook & {
+    variants?: Array<{ when: EntityCondition[], hidden?: boolean } & { [K in keyof EntityHeadLook]?: EntityHeadLook[K] | null }>
 }
 
 /** A painting variant: size in blocks, texture and the part of it the painting shows (all of it when not given). */
@@ -186,6 +236,8 @@ export type EntityModelsExport = {
     entities: Record<string, EntityDefinition>
     animations: Record<string, EntityAnimation>
     paintings?: PaintingsData
+    /** 1.19.4+ */
+    trims?: TrimsData
 }
 
 /** dist/entityModels.json: every exported version merged, mc-assets' versioned layout (a version key holds what was before it). */
@@ -200,6 +252,8 @@ export type EntityModelsData = {
     animations: Record<string, Record<string, EntityAnimation>>
     /** by version, under the key 'paintings' */
     paintings?: Record<string, Record<string, PaintingsData>>
+    /** by version, under the key 'trims' */
+    trims?: Record<string, Record<string, TrimsData>>
 }
 
 /** dist/entityModelsIndex.json: what a reader needs before loading an export. */
@@ -230,15 +284,22 @@ export class EntityModelsStore {
     private entities = new VersionedStore<EntityDefinition>()
     private animations = new VersionedStore<EntityAnimation>()
     private paintings = new VersionedStore<PaintingsData>()
+    private trims = new VersionedStore<TrimsData>()
     readonly versions: string[]
 
     constructor(data: EntityModelsData) {
         this.versions = data.versions
-        for (const store of [this.models, this.entities, this.animations, this.paintings]) store.inclusive = false
+        for (const store of [this.models, this.entities, this.animations, this.paintings, this.trims]) store.inclusive = false
         this.models.loadData(data.models as any)
         this.entities.loadData(data.entities as any)
         this.animations.loadData(data.animations as any)
         this.paintings.loadData((data.paintings ?? { latest: {} }) as any)
+        this.trims.loadData((data.trims ?? { latest: {} }) as any)
+    }
+
+    /** How the version names trim textures (1.19.4+). */
+    getTrims(version: string) {
+        return this.trims.get(version, 'trims')
     }
 
     /** How the version draws paintings. */
@@ -350,14 +411,40 @@ export const entityTextureFolder = (data: Pick<EntityModelsData, 'textureVersion
     return sorted.find(key => semver(version) < semver(key)) ?? 'latest'
 }
 
+/** A trim as an item has it: pattern and material by network id (registry index) or id (minecraft:coast, coast). */
+export type ArmorTrimInput = { pattern: number | string, material: number | string }
+
+const trimIndex = (list: Array<{ id: string, asset?: string }>, value: number | string) => {
+    if (typeof value === 'number') return list[value] ? value : -1
+    const id = value.includes(':') ? value : `minecraft:${value}`
+    return list.findIndex(entry => entry.id === id || entry.asset === id)
+}
+
+/**
+ * The texture of a trim on a piece (its layer and asset, {@link EntityArmorTrim}): the pattern's asset under the layer's
+ * prefix, then the material's suffix, or its override for the asset (iron trims on iron armor: iron_darker); undefined
+ * when the trim names no exported pattern or material.
+ */
+export const trimTexture = (trims: TrimsData, trim: ArmorTrimInput, layer: string, asset: string) => {
+    const pattern = trims.patterns[trimIndex(trims.patterns, trim.pattern)]
+    const material = trims.materials[trimIndex(trims.materials, trim.material)]
+    const names = trims.layers[layer]
+    if (!pattern || !material || !names) return undefined
+    const [namespace, path] = pattern.asset.includes(':') ? pattern.asset.split(':') as [string, string] : ['minecraft', pattern.asset]
+    return `${namespace}:${names.prefix}${path}${names.separator}${material.overrides?.[asset] ?? material.suffix}`
+}
+
 /**
  * The armor entries an entity draws for what it wears, keyed armor/<slot>/<key>: the pieces exported for it, a dyed
- * piece's dyeable entries tinted with its color (RGB).
+ * piece's dyeable entries tinted with its color (RGB), then a trimmed piece's trim (armor/<slot>/trim/<key>), each a copy
+ * of the piece's entry it names with the trim's texture and render type.
  */
 export const composeEntityArmor = (
     entity: EntityDefinition,
     equipment: Partial<Record<string, string | undefined>> = {},
-    colors: Partial<Record<string, number | undefined>> = {}
+    colors: Partial<Record<string, number | undefined>> = {},
+    trims: Partial<Record<string, ArmorTrimInput | undefined>> = {},
+    trimsData?: TrimsData
 ): Array<{ key: string; entry: EntityLookEntry }> => {
     const result: Array<{ key: string; entry: EntityLookEntry }> = []
     for (const [slot, items] of Object.entries(entity.armor ?? {})) {
@@ -369,8 +456,65 @@ export const composeEntityArmor = (
             const tinted = color !== undefined && piece.dyeable?.includes(key) ? { ...entry, tint: (0xff_00_00_00 | color) >> 0 } : entry
             result.push({ key: `armor/${slot}/${key}`, entry: tinted as EntityLookEntry })
         }
+        const trim = trims[slot]
+        if (!trim || !piece.trim || !trimsData) continue
+        const texture = trimTexture(trimsData, trim, piece.trim.layer, piece.trim.asset)
+        if (!texture) continue
+        const decal = !!trimsData.patterns[trimIndex(trimsData.patterns, trim.pattern)]?.decal
+        for (const [key, copied] of Object.entries(piece.trim.entries)) {
+            const { texture: _texture, renderType: _renderType, tint: _tint, ...geometry } = piece.entries[copied] as EntityModelEntry
+            result.push({ key: `armor/${slot}/trim/${key}`, entry: { ...geometry, texture, renderType: decal ? trimsData.renderTypes.decal : trimsData.renderTypes.normal } as EntityLookEntry })
+        }
     }
     return result
+}
+
+/** The head layer's look for the entity's metadata: the default, with every variant whose conditions hold (fewest first); undefined when hidden. */
+export const entityHeadLook = (entity: EntityDefinition, input: EntityLookInput = {}): EntityHeadLook | undefined => {
+    const head = entity.head
+    if (!head) return undefined
+    const look: EntityHeadLook = { anchor: head.anchor, skulls: head.skulls, item: head.item, worn: head.worn }
+    const variants = (head.variants ?? [])
+        .map((variant, index) => ({ variant, index }))
+        .filter(({ variant }) => variant.when.every(condition => conditionHolds(condition, entity, input)))
+        .sort((a, b) => a.variant.when.length - b.variant.when.length || a.index - b.index)
+    for (const { variant } of variants) {
+        if (variant.hidden) return undefined
+        for (const key of ['anchor', 'skulls', 'item', 'worn'] as const) {
+            if (!(key in variant)) continue
+            const value = variant[key]
+            if (value === null) delete look[key]
+            else (look as Record<string, unknown>)[key] = value
+        }
+    }
+    return look
+}
+
+/** What the head layer draws for an item worn on the head: a skull's model entries, or the item; nothing for head armor. */
+export type EntityHeadDraw = {
+    anchor: EntityHeadAnchor
+    /** a skull's model entries, their transforms relative to the anchor's frame */
+    entries?: Array<{ key: string, entry: EntityModelEntry }>
+    /** any other item: drawn as the item with this pose (relative to the frame) before its display transform */
+    item?: { transform: number[], context: string }
+    /** what wearing it changes in the rest of the look */
+    worn?: NonNullable<EntityState['patch']>
+}
+
+/**
+ * What the head layer draws for the item an entity wears on its head (minecraft-data's name, the damage value before
+ * 1.13 for skulls): a skull's entries, or the item as an item. Head armor the export draws as armor, and before 1.9 items
+ * that are no blocks (isBlock), draw nothing here.
+ */
+export const composeEntityHead = (entity: EntityDefinition, input: EntityLookInput, item: { name: string, metadata?: number }, isBlock = true): EntityHeadDraw | undefined => {
+    const look = entityHeadLook(entity, input)
+    if (!look) return undefined
+    const name = item.name.replace(/^minecraft:/, '')
+    const skull = look.skulls[name] ?? look.skulls[`${name}:${item.metadata ?? 0}`]
+    if (skull) return { anchor: look.anchor, entries: Object.entries(skull).map(([key, entry]) => ({ key, entry })), worn: look.worn?.skull }
+    if (entity.armor?.head?.[name] || !look.item) return undefined
+    if (look.item.items === 'blocks' && !isBlock) return undefined
+    return { anchor: look.anchor, item: { transform: look.item.transform, context: look.item.context }, worn: look.worn?.item }
 }
 
 /** The painting variant of a network id (registry id, or index), or of an id or title. */

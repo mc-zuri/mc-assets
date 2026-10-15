@@ -2,8 +2,9 @@ import { describe, test, expect } from 'vitest'
 import fs from 'fs'
 import path from 'path/posix'
 
-import { composeEntityArmor, composeEntityLook, entityModelsExportFor, paintingVariant, entityTextureFolder, EntityDefinition, EntityModelsData, EntityModelsExport, EntityModelsIndex, EntityModelsStore } from './consumer/entityModels'
-import { mergeEntityExports, readEntityExports } from './entityModels'
+import { composeEntityArmor, composeEntityHead, composeEntityLook, entityHeadLook, entityModelsExportFor, paintingVariant, entityTextureFolder, trimTexture, EntityDefinition, EntityModelsData, EntityModelsExport, EntityModelsIndex, EntityModelsStore } from './consumer/entityModels'
+import { mergeEntityExports, readEntityExports, readTrimTextureSources } from './entityModels'
+import { decodePng, permute, rgbaSha256 } from './trimTextures'
 
 const data = JSON.parse(fs.readFileSync('./dist/entityModels.json', 'utf8')) as EntityModelsData
 const store = new EntityModelsStore(data)
@@ -165,8 +166,11 @@ describe('entity textures by version', () => {
 
     test('every folder a version reads a texture from has it', () => {
         const missing: string[] = []
+        const trimSources = readTrimTextureSources()
         for (const version of data.versions) {
             for (const texture of Object.keys(data.textureVersions ?? {})) {
+                // a trim texture exists for the versions whose trims are named so
+                if (texture.startsWith('trims/') && !trimSources[version]?.[`minecraft:${texture}`]) continue
                 const folder = entityTextureFolder(data, texture, version)
                 if (!fs.existsSync(path.join('./dist/other-textures', folder, `${texture}.png`))) missing.push(`${version}: ${folder}/${texture}`)
             }
@@ -187,7 +191,9 @@ describe('one file per export', () => {
     test('each file draws what the merged data draws for its versions', () => {
         const index = JSON.parse(fs.readFileSync('./dist/entityModelsIndex.json', 'utf8')) as EntityModelsIndex
         expect(index.versions).toEqual(data.versions)
-        expect(index.entityExports.camel).not.toContain('1.19.4')
+        // the 1.19.4 export has the 1.20 experiment (trims): camels and sniffers too
+        expect(index.entityExports.camel?.[0]).toBe('1.19.4')
+        expect(index.entityExports.breeze).not.toContain('1.20.4')
         expect(index.entityExports.pig_zombie).toEqual(['1.8.9', '1.9.4', '1.10.2'])
         for (const version of data.versions) {
             const single = JSON.parse(fs.readFileSync(`./dist/entityModels/${version}.json`, 'utf8')) as EntityModelsData
@@ -213,5 +219,119 @@ describe('armor and paintings', () => {
         expect(paintingVariant(paintings, 0)).toBe(paintings.variants[0])
         expect(paintingVariant(paintings, 'kebab')?.id).toBe('minecraft:kebab')
         for (const variant of paintings.variants) expect(paintings.templates[`${variant.width}x${variant.height}`], variant.id).toBeTruthy()
+    })
+})
+
+describe('armor trims', () => {
+    const trimSources = readTrimTextureSources()
+    const trimVersions = data.versions.filter(version => trimSources[version])
+
+    test('versions from 1.19.4 have trims', () => {
+        expect(trimVersions[0]).toBe('1.19.4')
+        expect(trimVersions).toEqual(data.versions.slice(data.versions.indexOf('1.19.4')))
+    })
+
+    for (const version of trimVersions) {
+        test(`${version}: every trim of every pattern and material on every trimmable piece has its texture`, () => {
+            const trims = store.getTrims(version)!
+            const kinds = new Set<string>()
+            for (const name of Object.keys(exports.find(e => e.version === version)!.entities)) {
+                for (const items of Object.values(store.getEntity(version, name)!.armor ?? {})) {
+                    for (const piece of Object.values(items)) if (piece.trim) kinds.add(`${piece.trim.layer}|${piece.trim.asset}`)
+                }
+            }
+            expect(kinds.size).toBeGreaterThan(0)
+            const missing: string[] = []
+            for (const kind of kinds) {
+                const [layer, asset] = kind.split('|') as [string, string]
+                for (let pattern = 0; pattern < trims.patterns.length; pattern++) {
+                    for (let material = 0; material < trims.materials.length; material++) {
+                        const texture = trimTexture(trims, { pattern, material }, layer, asset)!
+                        if (!trimSources[version]![texture]) missing.push(`${texture} (not the game's)`)
+                        else if (!fs.existsSync(texturePath(texture, version))) missing.push(texture)
+                    }
+                }
+            }
+            expect(missing).toEqual([])
+        })
+
+        test(`${version}: the trim textures are the images the game makes`, () => {
+            const wrong: string[] = []
+            for (const [name, source] of Object.entries(trimSources[version]!)) {
+                const image = decodePng(fs.readFileSync(texturePath(name, version)))
+                if (rgbaSha256(image) !== source.sha256) wrong.push(name)
+            }
+            expect(wrong).toEqual([])
+        })
+    }
+
+    test('palette mapping: key colors take the palette ones, alphas multiply, other colors and transparent texels stay', () => {
+        const image = (pixels: number[][]) => ({ width: pixels.length, height: 1, data: new Uint8Array(pixels.flat()) })
+        const key = image([[10, 20, 30, 255], [40, 50, 60, 255]])
+        const palette = image([[1, 2, 3, 255], [4, 5, 6, 128]])
+        const base = image([[10, 20, 30, 255], [40, 50, 60, 200], [7, 8, 9, 100], [10, 20, 30, 0]])
+        expect([...permute(base, key, palette).data]).toEqual([1, 2, 3, 255, 4, 5, 6, 100, 7, 8, 9, 100, 10, 20, 30, 0])
+    })
+
+    test('a trimmed piece draws the trim over itself, with the darker palette on armor of its own material', () => {
+        const zombie = store.getEntity('26.3', 'zombie')!
+        const trims = store.getTrims('26.3')!
+        const coast = trims.patterns.findIndex(p => p.id === 'minecraft:coast')
+        const look = composeEntityArmor(zombie, { chest: 'iron_chestplate', legs: 'iron_leggings' }, {}, { chest: { pattern: 'coast', material: 'minecraft:iron' }, legs: { pattern: coast, material: 'gold' } }, trims)
+        const trim = look.filter(({ key }) => key.includes('/trim/'))
+        expect(trim.map(({ entry }) => (entry as { texture?: string }).texture).sort()).toEqual(['minecraft:trims/entity/humanoid/coast_iron_darker', 'minecraft:trims/entity/humanoid_leggings/coast_gold'])
+        const piece = zombie.armor!.chest!.iron_chestplate!
+        const [trimKey, copied] = Object.entries(piece.trim!.entries)[0]!
+        const { texture, renderType, tint, ...geometry } = piece.entries[copied] as Record<string, unknown>
+        const chest = trim.find(({ key }) => key === `armor/chest/trim/${trimKey}`)!
+        expect(chest.entry).toEqual({ ...geometry, texture: 'minecraft:trims/entity/humanoid/coast_iron_darker', renderType: trims.renderTypes.normal })
+        // 1.20.4: named after the armor's model layer
+        const old = store.getTrims('1.20.4')!
+        expect(trimTexture(old, { pattern: 'minecraft:coast', material: 'minecraft:iron' }, 'humanoid_leggings', 'iron')).toBe('minecraft:trims/models/armor/coast_leggings_iron_darker')
+        expect(trimTexture(old, { pattern: 'minecraft:coast', material: 'minecraft:iron' }, 'humanoid', 'gold')).toBe('minecraft:trims/models/armor/coast_iron')
+    })
+})
+
+describe('head items', () => {
+    test('skulls, items and head armor on a zombie', () => {
+        const zombie = store.getEntity('26.3', 'zombie')!
+        const skull = composeEntityHead(zombie, {}, { name: 'skeleton_skull' })!
+        expect(skull.anchor.model).toBe('minecraft:zombie#main')
+        expect(skull.anchor.chain).toEqual(['', '/head'])
+        expect(skull.entries?.map(({ entry }) => entry.texture)).toEqual(['minecraft:entity/skeleton/skeleton'])
+        const pumpkin = composeEntityHead(zombie, {}, { name: 'carved_pumpkin' })!
+        expect(pumpkin.item?.context).toBe('head')
+        expect(pumpkin.entries).toBeUndefined()
+        expect(composeEntityHead(zombie, {}, { name: 'iron_helmet' })).toBeUndefined()
+        expect(composeEntityHead(zombie, {}, { name: 'stick' })?.item).toBeTruthy()
+    })
+
+    test('a baby moves the anchor', () => {
+        const zombie = store.getEntity('26.3', 'zombie')!
+        const variant = zombie.head!.variants![0]!
+        const metadata = Object.fromEntries(variant.when.map(c => ['index' in c ? c.index : 0, 'value' in c ? c.value : true]))
+        expect(entityHeadLook(zombie, { metadata })!.anchor).toEqual(variant.anchor)
+        expect(entityHeadLook(zombie, {})!.anchor).toEqual(zombie.head!.anchor)
+    })
+
+    test('before 1.13 skulls are the damage values of the skull item; 1.8 draws only blocks', () => {
+        const zombie = store.getEntity('1.12.2', 'zombie')!
+        expect(composeEntityHead(zombie, {}, { name: 'skull', metadata: 4 })?.entries?.[0]?.entry.texture).toBe('minecraft:entity/creeper/creeper')
+        expect(composeEntityHead(zombie, {}, { name: 'stick' }, false)?.item).toBeTruthy()
+        const old = store.getEntity('1.8.9', 'zombie')!
+        expect(composeEntityHead(old, {}, { name: 'stick' }, false)).toBeUndefined()
+        expect(composeEntityHead(old, {}, { name: 'pumpkin' }, true)?.item).toBeTruthy()
+    })
+
+    test('every version draws skulls on its zombies', () => {
+        for (const version of data.versions) {
+            const zombie = store.getEntity(version, 'zombie')!
+            const look = entityHeadLook(zombie, {})
+            expect(look, version).toBeTruthy()
+            expect(Object.keys(look!.skulls).length, version).toBeGreaterThanOrEqual(5)
+            for (const entries of Object.values(look!.skulls)) {
+                for (const entry of Object.values(entries)) expect(store.getModel(version, entry.model), `${version} ${entry.model}`).toBeTruthy()
+            }
+        }
     })
 })

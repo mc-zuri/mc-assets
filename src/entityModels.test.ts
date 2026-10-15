@@ -9,8 +9,11 @@ const data = JSON.parse(fs.readFileSync('./dist/entityModels.json', 'utf8')) as 
 const store = new EntityModelsStore(data)
 const latest = data.versions[data.versions.length - 1]!
 
-/** minecraft:entity/zombie/zombie -> dist/other-textures/latest/entity/zombie/zombie.png */
-const texturePath = (texture: string) => path.join('./dist/other-textures/latest', `${texture.replace(/^minecraft:/, '')}.png`)
+const exports = readEntityExports()
+
+/** minecraft:entity/zombie/zombie -> dist/other-textures/<the version's folder>/entity/zombie/zombie.png */
+const texturePath = (texture: string, version: string) =>
+    path.join('./dist/other-textures', entityTextureFolder(data, texture, version), `${texture.replace(/^minecraft:/, '')}.png`)
 
 describe('entity models', () => {
     test('every export is merged', () => {
@@ -21,7 +24,8 @@ describe('entity models', () => {
     for (const version of data.versions) {
         test(`${version}: every model entry names an exported model and a texture that exists`, () => {
             const missing: string[] = []
-            for (const name of Object.keys(data.entities.latest!)) {
+            // the names this version's own export has (1.8 names entities PigZombie: pig_zombie)
+            for (const name of Object.keys(exports.find(e => e.version === version)!.entities)) {
                 const entity = store.getEntity(version, name)!
                 for (const state of entity.states) {
                     const entries = (state.look ?? state.patch ?? {}) as Record<string, Record<string, unknown> | null>
@@ -30,7 +34,7 @@ describe('entity models', () => {
                         if (entry.model && !store.getModel(version, entry.model as string)) missing.push(`${name}[${state.name}] ${key}: model ${entry.model}`)
                         const texture = entry.texture as string | undefined
                         // painting and other atlases are drawn by the renderer from their sprites
-                        if (texture && !texture.includes(':atlas/') && !fs.existsSync(texturePath(texture))) missing.push(`${name}[${state.name}] ${key}: texture ${texture}`)
+                        if (texture && !texture.includes(':atlas/') && !fs.existsSync(texturePath(texture, version))) missing.push(`${name}[${state.name}] ${key}: texture ${texture}`)
                     }
                 }
             }
@@ -48,6 +52,38 @@ describe('entity models', () => {
                 expect(state.when.length, `${name}[${state.name}]`).toBeGreaterThan(0)
             }
         }
+    })
+
+    test('GL-era versions read their own export, under the names they had', () => {
+        for (const [version, names] of [
+            ['1.8.8', ['pig_zombie', 'entity_horse', 'villager_golem', 'ozelot', 'snow_man', 'wither_boss', 'mushroom_cow']],
+            ['1.9.4', ['shulker', 'entity_horse']],
+            ['1.10.2', ['polar_bear']],
+            ['1.11.2', ['llama', 'evocation_illager', 'vex', 'zombie_villager', 'donkey']],
+            ['1.12.2', ['parrot', 'illusion_illager']],
+            ['1.13.2', ['drowned', 'dolphin', 'phantom', 'turtle', 'tropical_fish', 'cod']],
+            ['1.14.4', ['fox', 'panda', 'ravager', 'pillager', 'wandering_trader', 'cat']]
+        ] as const) {
+            for (const name of names) {
+                const look = composeEntityLook(store.getEntity(version, name)!)
+                expect(look.some(({ entry }) => entry.type === 'model'), `${version} ${name}`).toBe(true)
+            }
+        }
+        // a 1.8 zombie is drawn with the 1.8 model (no villager zombie arms), a 1.14 one with its own
+        expect(store.getEntity('1.8.8', 'zombie')).not.toEqual(store.getEntity('1.14.4', 'zombie'))
+    })
+
+    test('GL-era looks: horse coat color and markings are bytes of one int', () => {
+        const horse = store.getEntity('1.12.2', 'horse')!
+        const states = horse.states.filter(s => s.name === 'color=3' || s.name === 'markings=2')
+        // the bits the values written change: colors 0 to 6, markings 0 to 4 in the second byte
+        expect(states.map(s => s.when.map(c => ('mask' in c ? c.mask : undefined)))).toEqual([[7], [0x700]])
+        const layers = (look: ReturnType<typeof composeEntityLook>) => (look[0]!.entry as { textureLayers?: string[] }).textureLayers
+        const index = (states[0]!.when[0] as { index: number }).index
+        expect(layers(composeEntityLook(horse, { metadata: { [index]: 3 | (2 << 8) } }))).toEqual([
+            'minecraft:entity/horse/horse_brown',
+            'minecraft:entity/horse/horse_markings_whitefield'
+        ])
     })
 
     test('the new mobs have models', () => {

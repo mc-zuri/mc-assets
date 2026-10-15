@@ -69,6 +69,8 @@ export type EntityModelEntry = EntryBase & {
     tint?: number
     /** by part path relative to the drawn part ("" is the part itself) */
     pose?: Record<string, EntityPartRestPose>
+    /** the model class that draws it (ZombieModel, BoatModel...): whose animation code (setupAnim) poses its parts */
+    modelClass?: string
 }
 
 export type EntityBlockEntry = EntryBase & {
@@ -137,6 +139,8 @@ export type EntityDefinition = {
     armor?: Record<string, Record<string, EntityArmorPiece>>
     /** skulls and other items worn on the head (CustomHeadLayer), see {@link composeEntityHead} */
     head?: EntityHead
+    /** the synched data's names by index (1.14+: the accessor fields' names, as minecraft-data names metadata keys) */
+    dataNames?: Record<string, string>
     /** appearances that wear armor otherwise (a baby: its own armor model, or the adult one made young), with their conditions */
     armorVariants?: Array<{ when: EntityCondition[], armor: Record<string, Record<string, EntityArmorPiece>> }>
 }
